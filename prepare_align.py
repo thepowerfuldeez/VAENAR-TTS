@@ -6,7 +6,7 @@ from preprocessor import ljspeech
 
 
 def main(config):
-    if "LJSpeech" in config["dataset"]:
+    if "LJSpeech" in config["dataset"] or "snoop" in config['dataset']:
         ljspeech.prepare_align(config)
 
 

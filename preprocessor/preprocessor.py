@@ -7,7 +7,7 @@ import librosa
 import numpy as np
 from tqdm import tqdm
 
-from audio import Audio
+import audio as Audio
 from text import grapheme_to_phoneme
 from utils.tools import read_lexicon
 from g2p_en import G2p
@@ -22,12 +22,22 @@ class Preprocessor:
         self.out_dir = config["path"]["preprocessed_path"]
         self.val_size = config["preprocessing"]["val_size"]
         self.sampling_rate = config["preprocessing"]["audio"]["sampling_rate"]
-        self.frame_shift_sample = config["preprocessing"]["audio"]["frame_shift_sample"]
-        self.clip_norm = config["preprocessing"]["mel"]["normalize"]
+        self.skip_len = config["preprocessing"]["audio"]["skip_len"]
+        self.trim_top_db = config["preprocessing"]["audio"]["trim_top_db"]
+        self.filter_length = config["preprocessing"]["stft"]["filter_length"]
+        self.hop_length = config["preprocessing"]["stft"]["hop_length"]
 
         self.g2p = G2p()
-        self.audio_processor = Audio(config)
         self.lexicon = read_lexicon(config["path"]["lexicon_path"])
+        self.STFT = Audio.stft.TacotronSTFT(
+            config["preprocessing"]["stft"]["filter_length"],
+            config["preprocessing"]["stft"]["hop_length"],
+            config["preprocessing"]["stft"]["win_length"],
+            config["preprocessing"]["mel"]["n_mel_channels"],
+            config["preprocessing"]["audio"]["sampling_rate"],
+            config["preprocessing"]["mel"]["mel_fmin"],
+            config["preprocessing"]["mel"]["mel_fmax"],
+        )
 
     def build_from_path(self):
         os.makedirs((os.path.join(self.out_dir, "mel")), exist_ok=True)
@@ -46,7 +56,7 @@ class Preprocessor:
 
                 basename = wav_name.split(".")[0]
 
-                ret = self.process_utterance(speaker, basename, self.clip_norm)
+                ret = self.process_utterance(speaker, basename)
                 if ret is None:
                     continue
                 else:
@@ -61,7 +71,7 @@ class Preprocessor:
 
         print(
             "Total time: {} hours".format(
-                n_frames * self.frame_shift_sample / self.sampling_rate / 3600
+                n_frames * self.hop_length / self.sampling_rate / 3600
             )
         )
 
@@ -78,12 +88,22 @@ class Preprocessor:
 
         return out
 
-    def process_utterance(self, speaker, basename, clip_norm=False):
+    def process_utterance(self, speaker, basename):
         wav_path = os.path.join(self.in_dir, speaker, "{}.wav".format(basename))
         text_path = os.path.join(self.in_dir, speaker, "{}.lab".format(basename))
 
-        # Compute mel-scale spectrogram from raw audio
-        mel_spectrogram = self.audio_processor.get_mel_from_wav(wav_path, clip_norm=clip_norm)
+        # Read and trim wav files
+        wav, _ = librosa.load(wav_path)
+        wav = wav.astype(np.float32)
+
+        if len(wav) < self.skip_len:
+            return None
+
+        wav = librosa.effects.trim(wav, top_db=self.trim_top_db, frame_length=self.filter_length, hop_length=self.hop_length)[0]
+
+        # Compute mel-scale spectrogram
+        mel_spectrogram, _ = Audio.stft.get_mel_spectrogram(self.STFT, wav)
+        mel_spectrogram = mel_spectrogram.squeeze(1).numpy()
 
         # Read raw text
         with open(text_path, "r") as f:

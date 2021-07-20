@@ -4,6 +4,7 @@ import librosa
 import numpy as np
 from scipy.io import wavfile
 from tqdm import tqdm
+from pathlib import Path
 
 from text import _clean_text
 
@@ -14,12 +15,12 @@ def prepare_align(config):
     sampling_rate = config["preprocessing"]["audio"]["sampling_rate"]
     max_wav_value = config["preprocessing"]["audio"]["max_wav_value"]
     cleaners = config["preprocessing"]["text"]["text_cleaners"]
-    speaker = "LJSpeech"
-    with open(os.path.join(in_dir, "metadata.csv"), encoding="utf-8") as f:
+    speaker = config['dataset']
+    with open(os.path.join(in_dir, "metadata.txt"), encoding="utf-8") as f:
         for line in tqdm(f):
             parts = line.strip().split("|")
-            base_name = parts[0]
-            text = parts[2]
+            base_name = Path(parts[0]).stem
+            text = parts[1]
             text = _clean_text(text, cleaners)
 
             wav_path = os.path.join(in_dir, "wavs", "{}.wav".format(base_name))

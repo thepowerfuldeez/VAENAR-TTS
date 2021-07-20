@@ -77,9 +77,9 @@ to serve TensorBoard on your localhost.
 # Implementation Issues
 
 - Removed arguments, methods during converting Tensorflow to PyTorch: name, kwargs, training, get_config()
-- Specify `in_features` in **LinearNorm** which is corresponding to `tf.keras.layers.Dense`. Also, `in_channels` is explicitly specified in **Conv1D**.
-- get_mask_from_lengths() function returns logical not of that of FastSpeech2.
-- In this implementation, the `griffin_lim` algorithms is used to convert a mel-spectrogram to a waveform. You can use **HiFi-GAN** as a vocoder by setting config, but you need to [train it from scratch](https://github.com/jik876/hifi-gan) (you cannot use the provided pre-trained **HiFi-GAN** model).
+- Specify `in_features` in LinearNorm which is corresponding to `tf.keras.layers.Dense`
+- get_mask_from_lengths() function returns logical not of that of FastSpeech2
+- In Conv1D, `in_channels` is explicitly specified and `w_init_gain` is set to "tanh" for all blocks.
 
 # Citation
 

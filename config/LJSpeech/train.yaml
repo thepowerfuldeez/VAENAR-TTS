@@ -1,7 +1,7 @@
 path:
-  ckpt_path: "./output/ckpt/LJSpeech"
-  log_path: "./output/log/LJSpeech"
-  result_path: "./output/result/LJSpeech"
+  ckpt_path: "./output/ckpt/LJSpeech_11k"
+  log_path: "./output/log/LJSpeech_11k"
+  result_path: "./output/result/LJSpeech_11k"
 optimizer:
   batch_size: 32
   betas: [0.9, 0.999]
@@ -10,18 +10,24 @@ optimizer:
   grad_acc_step: 1
   init_lr: 0.000125
 step:
-  total_step: 900000
+  total_step: 300000
   log_step: 100
-  synth_step: 1000
+  synth_step: 5000
   val_step: 1000
-  save_step: 50000
+  save_step: 5000
 alignment:
   reduction_factors: [5, 4, 3, 2]
-  reduce_interval: [0, 200, 400, 600]
+  reduce_interval: [0, 150, 250, 400]
 length:
   length_weight: 1.
 kl:
   kl_weight: 1.
   kl_weight_init: 0.00001
-  kl_weight_increase_epoch: 1
-  kl_weight_end: 0.00001
+  kl_weight_increase_epoch: 50
+  kl_weight_end: 0.001
+dist_config:
+  dist_backend: "nccl"
+  dist_url: "tcp://localhost:54321"
+  world_size: 1
+num_gpus: 1
+picked_texts_filename: "../picked_texts.txt"

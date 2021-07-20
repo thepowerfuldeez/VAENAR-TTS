@@ -1,1 +1,1 @@
-from .audio import Audio
+import audio.stft as stft

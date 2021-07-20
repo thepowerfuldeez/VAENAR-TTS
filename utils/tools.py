@@ -6,13 +6,14 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 import matplotlib
+from scipy.io import wavfile
 from matplotlib import pyplot as plt
 
-
 matplotlib.use("Agg")
+import wandb
 
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def to_device(data, device):
@@ -58,34 +59,57 @@ def to_device(data, device):
 
 
 def log(
-    logger, step=None, losses=None, kl_weight=None, fig=None, audio=None, sampling_rate=22050, tag=""
+        step=None, losses=None, fig=None, audio=None, sampling_rate=22050,
+        tag="", type="train", kl_weight=None, means=None
 ):
     if losses is not None:
-        logger.add_scalar("Loss/total_loss", losses[0], step)
-        logger.add_scalar("Loss/mel_loss", losses[1], step)
-        logger.add_scalar("Loss/kl_loss", losses[2], step)
-        logger.add_scalar("Loss/duration_loss", losses[3], step)
-
+        wandb.log({
+            type + ".Loss/total_loss": losses[0],
+            type + ".Loss/mel_loss": losses[1],
+            type + ".Loss/kl_loss": losses[2],
+            type + ".Loss/duration_loss": losses[3],
+        }, step=step)
+        # logger.add_scalar("Loss/total_loss", losses[0], step)
+        # logger.add_scalar("Loss/mel_loss", losses[1], step)
+        # logger.add_scalar("Loss/kl_loss", losses[2], step)
+        # logger.add_scalar("Loss/duration_loss", losses[3], step)
+    if means is not None:
+        if means[0] is not None:
+            wandb.log({
+                type + ".Loss/post_probs_mean": means[0]
+            }, step=step)
+        if means[1] is not None:
+            wandb.log({
+                type + ".Loss/prior_probs_mean": means[1]
+            }, step=step)
     if kl_weight is not None:
-        logger.add_scalar("Training/kl_weight", kl_weight, step)
+        wandb.log({
+            type + ".Loss/kl_weight": kl_weight,
+        }, step=step)
 
     if fig is not None:
-        logger.add_figure(tag, fig)
+        # logger.add_figure(tag, fig)
+        wandb.log({
+            tag: fig,
+        }, step=step)
 
     if audio is not None:
-        logger.add_audio(
-            tag,
-            audio / max(abs(audio)),
-            sample_rate=sampling_rate,
-        )
+        # logger.add_audio(
+        #     tag,
+        #     audio / max(abs(audio)),
+        #     sample_rate=sampling_rate,
+        # )
+        wandb.log({
+            tag: wandb.Audio(audio / max(abs(audio)), sample_rate=sampling_rate),
+        }, step=step)
 
 
 def get_mask_from_lengths(lengths, max_len=None):
     batch_size = lengths.shape[0]
     if max_len is None:
-        max_len = torch.max(lengths).item()
+        max_len = torch.max(lengths).long().item()
 
-    ids = torch.arange(0, max_len).unsqueeze(0).expand(batch_size, -1).to(device)
+    ids = torch.arange(0, max_len).unsqueeze(0).expand(batch_size, -1).to(lengths.device)
     mask = ids < lengths.unsqueeze(1).expand(-1, max_len)
 
     return mask
@@ -110,32 +134,18 @@ def read_lexicon(lex_path):
     return lexicon
 
 
-def synth_one_sample(
-        targets,
-        predictions,
-        dec_alignments,
-        reduced_mel_lens,
-        vocoder,
-        audio_processor,
-        model_config,
-        preprocess_config):
-    clip_norm = preprocess_config["preprocessing"]["mel"]["normalize"]
-    max_abs_value = preprocess_config["preprocessing"]["mel"]["max_abs_value"]
-    min_level_db = preprocess_config["preprocessing"]["mel"]["min_level_db"]
-    ref_level_db = preprocess_config["preprocessing"]["audio"]["ref_level_db"]
-
+def synth_one_sample(targets,
+                     predictions,
+                     dec_alignments,
+                     reduced_mel_lens,
+                     vocoder,
+                     preprocess_config):
     basename = targets[0][0]
     src_len = targets[4][0].item()
     mel_len = targets[7][0].item()
     reduced_mel_len = reduced_mel_lens[0].item()
     mel_target = targets[6][0, :mel_len].detach().transpose(0, 1)
     mel_prediction = predictions[0, :mel_len].detach().transpose(0, 1)
-
-    if clip_norm:
-        mel_target = audio_processor._denormalize(mel_target.cpu().numpy())
-        mel_prediction = audio_processor._denormalize(mel_prediction.cpu().numpy())
-    mel_target = mel_target + ref_level_db
-    mel_prediction = mel_prediction + ref_level_db
 
     attn_keys, attn_values = list(), list()
     for key, value in sorted(dec_alignments.items()):
@@ -145,8 +155,8 @@ def synth_one_sample(
 
     fig = plot_mel(
         [
-            mel_prediction,
-            mel_target,
+            mel_prediction.cpu().numpy(),
+            mel_target.cpu().numpy(),
         ],
         ["Synthetized Spectrogram", "Ground-Truth Spectrogram", "Decoder Alignment"],
     )
@@ -154,60 +164,31 @@ def synth_one_sample(
     if vocoder is not None:
         from .model import vocoder_infer
 
-        wav_reconstruction = audio_processor.inv_preemphasize(
-            vocoder_infer(
-                torch.from_numpy(mel_target).to(device).unsqueeze(0),
-                vocoder,
-                model_config,
-                preprocess_config,
-            )[0]
-        )
-        wav_prediction = audio_processor.inv_preemphasize(
-            vocoder_infer(
-                torch.from_numpy(mel_prediction).to(device).unsqueeze(0),
-                vocoder,
-                model_config,
-                preprocess_config,
-            )[0]
-        )
+        wav_reconstruction = vocoder_infer(
+            mel_target.unsqueeze(0),
+            vocoder,
+            preprocess_config,
+        )[0]
+        wav_prediction = vocoder_infer(
+            mel_prediction.unsqueeze(0),
+            vocoder,
+            preprocess_config,
+        )[0]
     else:
-        wav_reconstruction = audio_processor.inv_mel_spectrogram(mel_target)
-        wav_reconstruction = audio_processor.inv_preemphasize(wav_reconstruction)
-        wav_prediction = audio_processor.inv_mel_spectrogram(mel_prediction)
-        wav_prediction = audio_processor.inv_preemphasize(wav_prediction)
+        wav_reconstruction = wav_prediction = None
 
     return fig, attn_figs, wav_reconstruction, wav_prediction, basename
 
 
-def synth_samples(
-        targets,
-        predictions,
-        pred_lens,
-        reduced_pred_lens,
-        text_lens,
-        dec_alignments,
-        vocoder,
-        audio_processor,
-        model_config,
-        preprocess_config,
-        path):
-    clip_norm = preprocess_config["preprocessing"]["mel"]["normalize"]
-    max_abs_value = preprocess_config["preprocessing"]["mel"]["max_abs_value"]
-    min_level_db = preprocess_config["preprocessing"]["mel"]["min_level_db"]
-    ref_level_db = preprocess_config["preprocessing"]["audio"]["ref_level_db"]
-
-    predictions = predictions.detach().cpu().numpy()
-    if clip_norm:
-        predictions = audio_processor._denormalize(predictions)
-    predictions = predictions + ref_level_db
-
+def synth_samples(targets, predictions, pred_lens, reduced_pred_lens, text_lens, dec_alignments, vocoder,
+                  preprocess_config, path):
     basenames = targets[0]
     for i in range(len(targets[0])):
         basename = basenames[i]
         src_len = text_lens[i].item()
         mel_len = pred_lens[i].item()
         reduced_mel_len = reduced_pred_lens[i].item()
-        mel_prediction = predictions[i, :mel_len].transpose(0, 1)
+        mel_prediction = predictions[i, :mel_len].detach().transpose(0, 1)
 
         attn_keys, attn_values = list(), list()
         for key, value in sorted(dec_alignments.items()):
@@ -223,7 +204,7 @@ def synth_samples(
 
         fig = plot_mel(
             [
-                mel_prediction,
+                mel_prediction.cpu().numpy(),
             ],
             ["Synthetized Spectrogram"],
             save_dir=os.path.join(path, "{}.png".format(basename)),
@@ -231,22 +212,15 @@ def synth_samples(
 
     from .model import vocoder_infer
 
-    mel_predictions = np.transpose(predictions, [0, 2, 1])
-    lengths = pred_lens * preprocess_config["preprocessing"]["audio"]["frame_shift_sample"]
-    if vocoder is not None:
-        wav_predictions = list()
-        for wav_prediction in vocoder_infer(
-                torch.from_numpy(mel_predictions).to(device),
-                vocoder, model_config, preprocess_config, lengths=lengths
-            ):
-            wav_predictions.append(audio_processor.inv_preemphasize(wav_prediction))
-    else:
-        wav_predictions = audio_processor.inv_mel_spectrogram(mel_predictions)
-        wav_predictions = audio_processor.inv_preemphasize(wav_predictions)
+    mel_predictions = predictions.transpose(1, 2)
+    lengths = pred_lens * preprocess_config["preprocessing"]["stft"]["hop_length"]
+    wav_predictions = vocoder_infer(
+        mel_predictions, vocoder, preprocess_config, lengths=lengths
+    )
 
     sampling_rate = preprocess_config["preprocessing"]["audio"]["sampling_rate"]
     for wav, basename in zip(wav_predictions, basenames):
-        audio_processor.save_wav(os.path.join(path, "{}.wav".format(basename)), wav)
+        wavfile.write(os.path.join(path, "{}.wav".format(basename)), sampling_rate, wav)
 
 
 def plot_mel(data, titles, save_dir=None):
@@ -277,7 +251,7 @@ def plot_multi_attn(attn_keys, attn_values, save_dir=None):
         num_head = attn.shape[0]
         for j, head_ali in enumerate(attn):
             ax = fig.add_subplot(2, num_head // 2, j + 1)
-            ax.set_xlabel('Audio timestep (reduced)') if j >= num_head-2 else None
+            ax.set_xlabel('Audio timestep (reduced)') if j >= num_head - 2 else None
             ax.set_ylabel('Text timestep') if j % 2 == 0 else None
             im = ax.imshow(head_ali, aspect='auto', origin='lower')
             fig.colorbar(im, ax=ax)

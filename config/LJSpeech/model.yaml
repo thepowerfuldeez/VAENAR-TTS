@@ -62,5 +62,5 @@ length_predictor:
 max_seq_len: 1000
 
 vocoder:
-  model: "Griffin-Lim" # support 'HiFi-GAN', 'MelGAN', 'Griffin-Lim'
-  speaker: "LJSpeech" # support  'LJSpeech', 'universal'
+  # expect path to traced vocoder
+  path: "/storage/george/outdir/fregan_checkpoints/universal_v1/generator.pth"

@@ -1,14 +1,11 @@
-import re
 import argparse
-from string import punctuation
-
 import torch
 import yaml
 import numpy as np
 from torch.utils.data import DataLoader
 from g2p_en import G2p
+from tqdm.auto import tqdm
 
-from audio import Audio
 from utils.model import get_model, get_vocoder
 from utils.tools import to_device, synth_samples, read_lexicon
 from dataset import TextDataset
@@ -35,37 +32,27 @@ def preprocess_english(text, preprocess_config):
     return np.array(sequence)
 
 
-def synthesize(model, step, configs, vocoder, audio_processor, batchs, temperature):
+def synthesize(model, dataset, configs, vocoder, batchs, temperature):
     preprocess_config, model_config, train_config = configs
 
     final_reduction_factor = model_config["common"]["final_reduction_factor"]
 
-    for batch in batchs:
+    for batch in tqdm(batchs):
         batch = to_device(batch, device)
         with torch.no_grad():
-            t, t_l = batch[3], batch[4]
-            text_pos_step = model.mel_text_len_ratio / float(final_reduction_factor)
-            text_embd = model.text_encoder(t, t_l, pos_step=text_pos_step)
-            predicted_lengths = model.length_predictor(
-                text_embd.detach(), t_l)
-            predicted_m_l = predicted_lengths.type(torch.int32)
-            reduced_pred_ml = (predicted_m_l + 80 + final_reduction_factor - 1
-                            ) // final_reduction_factor
-            prior_latents, prior_logprobs = model.prior.sample(
-                reduced_pred_ml, text_embd, t_l, temperature=temperature)
-            _, prior_dec_outs, prior_dec_alignments = model.decoder(
-                prior_latents, text_embd, reduced_pred_ml, t_l)
+            texts, text_lengths = batch[3], batch[4]
+            mel, mel_lengths, reduced_mel_lengths, alignments = model.inference(
+                inputs=texts, text_lengths=text_lengths, reduction_factor=final_reduction_factor)
+            mel = dataset.denormalize(mel.T.cpu(), dataset.scaler).T.to(mel.device)
 
             synth_samples(
                 batch,
-                prior_dec_outs,
-                predicted_m_l + 80,
-                reduced_pred_ml,
-                t_l,
-                prior_dec_alignments,
+                mel,
+                mel_lengths,
+                reduced_mel_lengths,
+                text_lengths,
+                alignments,
                 vocoder,
-                audio_processor,
-                model_config,
                 preprocess_config,
                 train_config["path"]["result_path"],
             )
@@ -113,7 +100,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "-t", "--train_config", type=str, required=True, help="path to train.yaml"
     )
-    parser.add_argument('--temperature', type=float, default=0.)
+    parser.add_argument('--temperature', type=float, default=1.0)
     args = parser.parse_args()
 
     # Check source texts
@@ -129,7 +116,6 @@ if __name__ == "__main__":
     model_config = yaml.load(open(args.model_config, "r"), Loader=yaml.FullLoader)
     train_config = yaml.load(open(args.train_config, "r"), Loader=yaml.FullLoader)
     configs = (preprocess_config, model_config, train_config)
-    audio_processor = Audio(preprocess_config)
 
     # Get model
     model = get_model(args, configs, device, train=False)
@@ -151,9 +137,9 @@ if __name__ == "__main__":
         speakers = np.array([args.speaker_id])
         if preprocess_config["preprocessing"]["text"]["language"] == "en":
             texts = np.array([preprocess_english(args.text, preprocess_config)])
-        elif preprocess_config["preprocessing"]["text"]["language"] == "zh":
-            texts = np.array([preprocess_mandarin(args.text, preprocess_config)])
+        else:
+            raise NotImplementedError
         text_lens = np.array([len(texts[0])])
         batchs = [(ids, raw_texts, speakers, texts, text_lens, max(text_lens))]
 
-    synthesize(model, args.restore_step, configs, vocoder, audio_processor, batchs, args.temperature)
+    synthesize(model, dataset, configs, vocoder, batchs, args.temperature)

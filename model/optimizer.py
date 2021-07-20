@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+from torch.distributed.optim import ZeroRedundancyOptimizer
 
 
 class ScheduledOptim:
@@ -7,11 +8,20 @@ class ScheduledOptim:
 
     def __init__(self, model, train_config):
 
-        self._optimizer = torch.optim.Adam(
-            model.parameters(),
-            betas=train_config["optimizer"]["betas"],
-            eps=train_config["optimizer"]["eps"],
-        )
+        # if train_config['num_gpus'] > 1:
+        #     self._optimizer = ZeroRedundancyOptimizer(
+        #         model.parameters(),
+        #         optimizer_class=torch.optim.Adam,
+        #         betas=train_config["optimizer"]["betas"],
+        #         eps=train_config["optimizer"]["eps"],
+        #     )
+        # else:
+        if 1:
+            self._optimizer = torch.optim.Adam(
+                model.parameters(),
+                betas=train_config["optimizer"]["betas"],
+                eps=train_config["optimizer"]["eps"],
+            )
         self.init_lr = train_config["optimizer"]["init_lr"]
         self._init_learning_rate()
 
