@@ -3,36 +3,16 @@ import torch
 import yaml
 import numpy as np
 from torch.utils.data import DataLoader
-from g2p_en import G2p
 from tqdm.auto import tqdm
 
 from utils.model import get_model, get_vocoder
-from utils.tools import to_device, synth_samples, read_lexicon
-from dataset import TextDataset
-from text import grapheme_to_phoneme, text_to_sequence
+from utils.tools import to_device, synth_samples
+from dataset import TextDataset, preprocess_english
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def preprocess_english(text, preprocess_config):
-    g2p = G2p()
-    lexicon = read_lexicon(preprocess_config["path"]["lexicon_path"])
-
-    phones = grapheme_to_phoneme(text, g2p, lexicon)
-    phones = "{" + " ".join(phones) + "}"
-
-    print("Raw Text Sequence: {}".format(text))
-    print("Phoneme Sequence: {}".format(phones))
-    sequence = np.array(
-        text_to_sequence(
-            phones, preprocess_config["preprocessing"]["text"]["text_cleaners"]
-        )
-    )
-
-    return np.array(sequence)
-
-
-def synthesize(model, dataset, configs, vocoder, batchs, temperature):
+def synthesize(model, dataset, configs, vocoder, batchs, temperature, length_offset):
     preprocess_config, model_config, train_config = configs
 
     final_reduction_factor = model_config["common"]["final_reduction_factor"]
@@ -41,8 +21,9 @@ def synthesize(model, dataset, configs, vocoder, batchs, temperature):
         batch = to_device(batch, device)
         with torch.no_grad():
             texts, text_lengths = batch[3], batch[4]
-            mel, mel_lengths, reduced_mel_lengths, alignments = model.inference(
-                inputs=texts, text_lengths=text_lengths, reduction_factor=final_reduction_factor)
+            mel, mel_lengths, reduced_mel_lengths, alignments, *_ = model.inference(
+                inputs=texts, text_lengths=text_lengths, length_offset=length_offset,
+                reduction_factor=final_reduction_factor, temperature=temperature)
             mel = dataset.denormalize(mel.T.cpu(), dataset.scaler).T.to(mel.device)
 
             synth_samples(
@@ -101,6 +82,7 @@ if __name__ == "__main__":
         "-t", "--train_config", type=str, required=True, help="path to train.yaml"
     )
     parser.add_argument('--temperature', type=float, default=1.0)
+    parser.add_argument('--length_offset', type=int, default=80)
     args = parser.parse_args()
 
     # Check source texts
@@ -142,4 +124,4 @@ if __name__ == "__main__":
         text_lens = np.array([len(texts[0])])
         batchs = [(ids, raw_texts, speakers, texts, text_lens, max(text_lens))]
 
-    synthesize(model, dataset, configs, vocoder, batchs, args.temperature)
+    synthesize(model, dataset, configs, vocoder, batchs, args.temperature, args.length_offset)

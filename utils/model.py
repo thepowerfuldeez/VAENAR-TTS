@@ -27,9 +27,9 @@ def get_model(args, configs, device, train=False):
             scheduled_optim.load_state_dict(ckpt["optimizer"])
         model.train()
         return model, scheduled_optim
-
-    model.eval()
-    model.requires_grad_ = False
+    else:
+        model.eval()
+        model.requires_grad_ = False
     return model
 
 

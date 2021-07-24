@@ -16,8 +16,7 @@ import numpy as np
 
 from utils.model import get_model, get_vocoder, get_param_num
 from utils.tools import to_device, log, synth_one_sample
-from dataset import Dataset
-from synthesize import preprocess_english
+from dataset import MelDataset, preprocess_english
 
 from evaluate import evaluate
 import wandb
@@ -39,7 +38,7 @@ def train(rank, args, configs):
     device = torch.device('cuda:{:d}'.format(rank))
 
     # Get dataset
-    dataset = Dataset(
+    dataset = MelDataset(
         "train.txt", preprocess_config, train_config, sort=True, drop_last=True
     )
     batch_size = train_config["optimizer"]["batch_size"]

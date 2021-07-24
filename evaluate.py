@@ -5,7 +5,7 @@ from torch.utils.data import DataLoader
 
 from utils.model import get_model, get_vocoder
 from utils.tools import to_device, log, synth_one_sample
-from dataset import Dataset
+from dataset import MelDataset
 
 
 # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -16,7 +16,7 @@ def evaluate(model, step, configs, reduction_factor, length_weight, kl_weight,
     preprocess_config, model_config, train_config = configs
 
     # Get dataset
-    dataset = Dataset(
+    dataset = MelDataset(
         "val.txt", preprocess_config, train_config, sort=True, drop_last=False
     )
     batch_size = train_config["optimizer"]["batch_size"]

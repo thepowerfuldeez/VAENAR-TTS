@@ -221,13 +221,13 @@ class VAENAR(nn.Module):
         return (decoded_outs, l2_loss, kl_divergence, length_loss, dec_alignments, reduced_mel_lens,
                 posterior_logprobs, prior_logprobs)
 
-    def inference(self, inputs, text_lengths, reduction_factor=2):
+    def inference(self, inputs, text_lengths, reduction_factor=2, temperature=1.0, length_offset=80):
         text_pos_step = self.mel_text_len_ratio / float(reduction_factor)
         text_embd = self.text_encoder(inputs, text_lengths, pos_step=text_pos_step)
-        predicted_mel_lengths = (self.length_predictor(text_embd, text_lengths) + 80).long()
+        predicted_mel_lengths = (self.length_predictor(text_embd, text_lengths) + length_offset).long()
         reduced_mel_lens = (predicted_mel_lengths + reduction_factor - 1) // reduction_factor
 
-        prior_latents, prior_logprobs = self.prior(reduced_mel_lens, text_embd, text_lengths)
+        prior_latents, prior_logprobs = self.prior(reduced_mel_lens, text_embd, text_lengths, temperature=temperature)
 
         _, predicted_mel, dec_alignments = self.decoder(
             inputs=prior_latents, text_embd=text_embd, z_lengths=reduced_mel_lens,

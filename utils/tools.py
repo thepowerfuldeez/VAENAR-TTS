@@ -220,6 +220,7 @@ def synth_samples(targets, predictions, pred_lens, reduced_pred_lens, text_lens,
 
     sampling_rate = preprocess_config["preprocessing"]["audio"]["sampling_rate"]
     for wav, basename in zip(wav_predictions, basenames):
+        wav = wav / np.abs(wav).max()
         wavfile.write(os.path.join(path, "{}.wav".format(basename)), sampling_rate, wav)
 
 

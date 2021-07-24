@@ -1,19 +1,41 @@
 import json
 import math
+from g2p_en import G2p
 import os
 
 import numpy as np
 from pathlib import Path
 import torch
 from torch.utils.data import Dataset
+import re
+import random
 
-from text import text_to_sequence
-from utils.tools import pad_1D, pad_2D
+from text import grapheme_to_phoneme, text_to_sequence, get_phones, _clean_text, cmudict, get_arpabet
+from utils.tools import pad_1D, pad_2D, read_lexicon
 
 
-class Dataset(Dataset):
+g2p = G2p()
+cmudict_ = cmudict.CMUDict("data/cmudict_dictionary", True)
+
+
+def preprocess_english(text, preprocess_config):
+    lexicon = read_lexicon(preprocess_config["path"]["lexicon_path"])
+
+    phones = grapheme_to_phoneme(text, g2p, lexicon)
+    phones = "{" + " ".join(phones) + "}"
+
+    print("Raw Text Sequence: {}".format(text))
+    print("Phoneme Sequence: {}".format(phones))
+    sequence = np.array(
+        text_to_sequence(phones, preprocess_config["preprocessing"]["text"]["text_cleaners"])
+    )
+
+    return np.array(sequence)
+
+
+class MelDataset(Dataset):
     def __init__(
-            self, filename, preprocess_config, train_config, sort=False, drop_last=False
+            self, filename, preprocess_config, train_config=None, sort=False, drop_last=False
     ):
         self.dataset_name = preprocess_config["dataset"]
         self.preprocessed_path = preprocess_config["path"]["preprocessed_path"]
@@ -149,12 +171,14 @@ class Dataset(Dataset):
 class TextDataset(Dataset):
     def __init__(self, filepath, preprocess_config):
         self.cleaners = preprocess_config["preprocessing"]["text"]["text_cleaners"]
+        self.preprocess_config = preprocess_config
 
         with open(os.path.join(preprocess_config["path"]["preprocessed_path"], "speakers.json")) as f:
             self.speaker_map = json.load(f)
         self.basename, self.speaker, self.text, self.raw_text = self.process_test_meta(
             filepath
         )
+        self.scaler = self.setup_scaler(preprocess_config['path']['stats_path'])
 
     def __len__(self):
         return len(self.text)
@@ -164,23 +188,28 @@ class TextDataset(Dataset):
         speaker = self.speaker[idx]
         speaker_id = self.speaker_map[speaker]
         raw_text = self.raw_text[idx]
-        phone = np.array(text_to_sequence(self.text[idx], self.cleaners))
+        # phone = np.array(text_to_sequence(self.text[idx], self.cleaners))
+        phone = preprocess_english(self.text[idx], preprocess_config=self.preprocess_config)
 
         return (basename, speaker_id, phone, raw_text)
 
-    def process_meta(self, filename):
-        with open(filename, "r", encoding="utf-8") as f:
-            name = []
-            speaker = []
-            text = []
-            raw_text = []
-            for line in f.readlines():
-                n, s, t, r = line.strip("\n").split("|")
-                name.append(n)
-                speaker.append(s)
-                text.append(t)
-                raw_text.append(r)
-            return name, speaker, text, raw_text
+    def setup_scaler(self, stats_path):
+        stats = np.load(stats_path, allow_pickle=True).item()
+        # mel_mean, mel_std = torch.tensor(stats['mel_mean']), torch.tensor(stats['mel_std'])
+        mel_mean, mel_std = np.array(stats['mel_mean']), np.array(stats['mel_std'])
+        return StandardScaler(mel_mean, mel_std)
+
+    def normalize(self, S, scaler=None):
+        """Put values in [0, self.max_norm] or [-self.max_norm, self.max_norm]"""
+        mel = scaler.transform(S.T).T
+        return mel
+
+    def denormalize(self, S, scaler=None, speaker=0):
+        """denormalize values"""
+        # pylint: disable=no-else-return
+        S_denorm = S.clone()
+        # mean-var scaling
+        return scaler.inverse_transform(S_denorm.T).T
 
     def process_test_meta(self, filename):
         name = []
@@ -215,11 +244,11 @@ class StandardScaler:
         self.scale_ = scale
 
     def transform(self, x: torch.Tensor):
-        x -= self.mean_#.to(x.device)
-        x /= self.scale_#.to(x.device)
+        x -= self.mean_  # .to(x.device)
+        x /= self.scale_  # .to(x.device)
         return x
 
     def inverse_transform(self, x: torch.Tensor):
-        x *= self.scale_#.to(x.device)
-        x += self.mean_#.to(x.device)
+        x *= self.scale_  # .to(x.device)
+        x += self.mean_  # .to(x.device)
         return x
